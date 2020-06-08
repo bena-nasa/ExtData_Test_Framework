@@ -46,7 +46,7 @@ class ExtDataCase():
         print "finished exec of ",self.case_name.rstrip()
         success = os.path.isfile('egress')
         os.chdir(orig_dir)
-        #shutil.rmtree(scrdir)
+        shutil.rmtree(scrdir)
 
         if success:
            return True
