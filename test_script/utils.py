@@ -23,7 +23,7 @@
 #      build_parallel
 #      build_serial
 #      build_pinstall
-#      build_cmake
+#      build_cmake_developer
 #      check_bld
 #      build_doc
 #      check_doc
@@ -70,6 +70,7 @@ import filecmp
 import shlex
 import distutils.spawn
 import subprocess
+import re
 
 from datetime import datetime
 from collections import OrderedDict
@@ -288,7 +289,8 @@ def get_hostname():
         # MAT Note that the DESKTOP is a "failover" if it is gsfc
         #     we return DESKTOP if it matches nothing else
     else:
-        raise Exception('could not get host name from node [%s]' % node)
+        HOST = 'DESKTOP'
+        #raise Exception('could not get host name from node [%s]' % node)
 
     return HOST
 
@@ -510,6 +512,8 @@ def source_g5_modules(g5_modules, fout=None):
     #MODULES = output[0].strip().split()
     MODULES = output[0].split('\n')[0].strip().split()
 
+    #print("MATMAT MODULES: ", MODULES)
+
 
     # query for modinit
     # -----------------
@@ -531,8 +535,8 @@ def source_g5_modules(g5_modules, fout=None):
         newdir[-1] = 'python'
     MODINIT = '/'.join(newdir)
     #print 'MODINIT:', MODINIT
-    if not os.path.isfile(MODINIT):
-        raise Exception('cant see %s' % MODINIT)
+    #if not os.path.isfile(MODINIT):
+        #raise Exception('cant see %s' % MODINIT)
 
 
     # set BASEDIR
@@ -551,10 +555,27 @@ def source_g5_modules(g5_modules, fout=None):
     # --------------------
     if (os.path.isfile(MODINIT)):
         writemsg(' and modules.\n', fout)
+
         exec(open(MODINIT).read())
         module('purge')
         for mod in MODULES:
             module('load',mod)
+
+        # At NAS something weird is happening with python
+        # if you force it to load this at the end, things work
+        #if HOST=='PLEIADES':
+            #module('load','python/2.7.15')
+        #module('list')
+    elif os.environ.get('LMOD_PKG') is not None:
+        writemsg(' and modules.\n', fout)
+
+        sys.path.insert(0,os.path.join(os.environ['LMOD_PKG'], "init"))
+        from env_modules_python import module
+
+        module('purge')
+        for mod in MODULES:
+            module('load',mod)
+
     else:
         raise Exception('could not load required modules')
 
@@ -939,15 +960,16 @@ def build_pinstall(SRC_DIR, GPU=False, DEBUG=False, fout=None):
 
     return True
 
-def build_cmake(SRC_DIR, GPU=False, DEBUG=False, PFUNIT=False, fout=None):
+def build_cmake_github(SRC_DIR, DEBUG=False, GNU=False, fout=None):
     """
     #---------------------------------------------------------------------------
-    # def build_cmake(SRC_DIR, fout):
+    # def build_cmake_developer(SRC_DIR, fout):
     #
     # Build model using make with cmake 
     #
     # Inputs:
     #  SRC_DIR: source dir
+    #    DEBUG: build with debugging
     #     fout: (open) file handle, if None set to sys.stdout
     #
     #---------------------------------------------------------------------------
@@ -963,27 +985,35 @@ def build_cmake(SRC_DIR, GPU=False, DEBUG=False, PFUNIT=False, fout=None):
     # ---------------
     CWD = os.getcwd()
 
-    # As cmake builds relative to SRC_DIR, use dirname to get that dir
-    # ----------------------------------------------------------------
-    BUILD_DIR = os.path.join(os.path.dirname(SRC_DIR),'BUILD')
+    # Are we running with Debug or Release?
+    # -------------------------------------
+    if DEBUG:
+        BUILD_TYPE="Debug"
+    else:
+        BUILD_TYPE="Release"
+    BUILD_DIR_NAME='build-'+BUILD_TYPE
+    INSTALL_DIR_NAME='install-'+BUILD_TYPE
+
+    BUILD_DIR = os.path.join(SRC_DIR,BUILD_DIR_NAME)
+    print("BUILD_DIR: [%s]" % BUILD_DIR)
     mkdir_p(BUILD_DIR)
     os.chdir(BUILD_DIR)
     
-    writemsg(' Building model (cmake)...', fout)
+    INSTALL_DIR = os.path.join(SRC_DIR,INSTALL_DIR_NAME)
+    print("INSTALL_DIR: [%s]" % INSTALL_DIR)
+
+    writemsg(' Building model (cmake - %s)...' % BUILD_TYPE, fout)
     
     # source g5_modules
     # -----------------
-    G5_MODULES = SRC_DIR + os.sep + 'g5_modules'
+    G5_MODULES = SRC_DIR + os.sep + '@env' + os.sep + 'g5_modules'
+    #print("G5_MODULES: [%s]" % G5_MODULES)
     source_g5_modules(G5_MODULES)
 
     # Get BASEDIR
     # -----------
     BASEDIR = os.environ['BASEDIR']
-    print(("BASEDIR: [%s]" % BASEDIR))
-
-    # set ESMADIR
-    # -----------
-    os.environ['ESMADIR'] = SRC_DIR + '/..'
+    #print(("BASEDIR: [%s]" % BASEDIR))
 
     sTart = time.time()
 
@@ -991,16 +1021,25 @@ def build_cmake(SRC_DIR, GPU=False, DEBUG=False, PFUNIT=False, fout=None):
     # ---------
     BLD_LOG = open(BUILD_DIR + '/log.cmake', 'w')
     if HOST == 'DISCOVER':
-      cmd = ['/usr/local/other/SLES11.3/cmake/3.8.2/gcc-4.3.4/bin/cmake', SRC_DIR, '-DBASEDIR='+os.path.join(BASEDIR,'Linux')]
+       import platform
+       if platform.linux_distribution()[1] == '11':
+           CMAKE_EXEC = '/usr/local/other/SLES11.3/cmake/3.14.1/bin/cmake'
+       else:
+           CMAKE_EXEC = '/usr/local/other/cmake/3.17.0/bin/cmake'
+       cmd = [CMAKE_EXEC, SRC_DIR, '-DBASEDIR='+os.path.join(BASEDIR,'Linux')]
     elif HOST=='PLEIADES':
-       cmd = ['cmake', SRC_DIR, '-DBASEDIR='+os.path.join(BASEDIR,'Linux'),'-DCMAKE_Fortran_COMPILER=ifort','-DCMAKE_C_COMPILER=icc','-DCMAKE_CXX_COMPILER=icpc']
+       CMAKE_EXEC = '/nobackup/gmao_SIteam/cmake/cmake-3.14.3/bin/cmake'
+       if GNU: 
+           cmd = [CMAKE_EXEC, SRC_DIR, '-DBASEDIR='+os.path.join(BASEDIR,'Linux'),'-DCMAKE_Fortran_COMPILER=gfortran','-DCMAKE_C_COMPILER=gcc','-DCMAKE_CXX_COMPILER=g++']
+       else:
+           cmd = [CMAKE_EXEC, SRC_DIR, '-DBASEDIR='+os.path.join(BASEDIR,'Linux'),'-DCMAKE_Fortran_COMPILER=ifort','-DCMAKE_C_COMPILER=icc','-DCMAKE_CXX_COMPILER=icpc']
     else:
         raise Exception('HOST [%s] not recognized' % HOST)
 
-    if PFUNIT:
-        cmd.append('-DPFUNIT=ON')
+    cmd.append('-DCMAKE_BUILD_TYPE=%s' % BUILD_TYPE)
+    cmd.append('-DCMAKE_INSTALL_PREFIX=%s' % INSTALL_DIR)
 
-    print(("CMD: [%s]" % cmd))
+    #print(("CMD: [%s]" % cmd))
 
     run = sp.Popen(cmd, stdout=BLD_LOG, stderr=BLD_LOG)
     rtrnCode = run.wait()
@@ -1042,7 +1081,7 @@ def build_cmake(SRC_DIR, GPU=False, DEBUG=False, PFUNIT=False, fout=None):
 
     return True
 
-def build_cmaketests(SRC_DIR, fout=None):
+def build_cmaketests(SRC_DIR, DEBUG=False, fout=None):
     """
     #---------------------------------------------------------------------------
     # def build_cmaketests(SRC_DIR, fout):
@@ -1066,17 +1105,25 @@ def build_cmaketests(SRC_DIR, fout=None):
     # ---------------
     CWD = os.getcwd()
 
+    # Are we running with Debug or Release?
+    # -------------------------------------
+    if DEBUG:
+        BUILD_TYPE="Debug"
+    else:
+        BUILD_TYPE="Release"
+    BUILD_DIR_NAME='build-'+BUILD_TYPE
+
     # As cmake builds relative to SRC_DIR, use dirname to get that dir
     # ----------------------------------------------------------------
-    BUILD_DIR = os.path.join(os.path.dirname(SRC_DIR),'BUILD')
+    BUILD_DIR = os.path.join(SRC_DIR,BUILD_DIR_NAME)
     mkdir_p(BUILD_DIR)
     os.chdir(BUILD_DIR)
-    
+
     writemsg(' Building cmake tests...', fout)
     
     # source g5_modules
     # -----------------
-    G5_MODULES = SRC_DIR + os.sep + 'g5_modules'
+    G5_MODULES = SRC_DIR + os.sep + '@env' + os.sep + 'g5_modules'
     source_g5_modules(G5_MODULES)
 
     # Get BASEDIR
@@ -1085,7 +1132,7 @@ def build_cmaketests(SRC_DIR, fout=None):
 
     # set ESMADIR
     # -----------
-    os.environ['ESMADIR'] = SRC_DIR + '/..'
+    #os.environ['ESMADIR'] = SRC_DIR + '/..'
 
     sTart = time.time()
 
@@ -1111,7 +1158,7 @@ def build_cmaketests(SRC_DIR, fout=None):
 
     return True
 
-def run_cmaketests(SRC_DIR, fout=None):
+def run_cmaketests(SRC_DIR, DEBUG=False, fout=None):
     """
     #---------------------------------------------------------------------------
     # def run_cmaketests(SRC_DIR, fout):
@@ -1135,9 +1182,17 @@ def run_cmaketests(SRC_DIR, fout=None):
     # ---------------
     CWD = os.getcwd()
 
+    # Are we running with Debug or Release?
+    # -------------------------------------
+    if DEBUG:
+        BUILD_TYPE="Debug"
+    else:
+        BUILD_TYPE="Release"
+    BUILD_DIR_NAME='build-'+BUILD_TYPE
+
     # As cmake builds relative to SRC_DIR, use dirname to get that dir
     # ----------------------------------------------------------------
-    BUILD_DIR = os.path.join(os.path.dirname(SRC_DIR),'BUILD')
+    BUILD_DIR = os.path.join(SRC_DIR,BUILD_DIR_NAME)
     mkdir_p(BUILD_DIR)
     os.chdir(BUILD_DIR)
     
@@ -1145,7 +1200,7 @@ def run_cmaketests(SRC_DIR, fout=None):
     
     # source g5_modules
     # -----------------
-    G5_MODULES = SRC_DIR + os.sep + 'g5_modules'
+    G5_MODULES = SRC_DIR + os.sep + '@env' + os.sep + 'g5_modules'
     source_g5_modules(G5_MODULES)
 
     # Get BASEDIR
@@ -1162,7 +1217,7 @@ def run_cmaketests(SRC_DIR, fout=None):
     # ---------
     RUN_LOG = open(BUILD_DIR + '/log.runtests', 'w')
 
-    cmd = ['ctest']
+    cmd = ['ctest', '-V']
 
     run = sp.Popen(cmd, stdout=RUN_LOG, stderr=RUN_LOG)
     rtrnCode = run.wait()
@@ -1188,7 +1243,7 @@ def run_cmaketests(SRC_DIR, fout=None):
 
     return True
 
-def check_bld(SRC_DIR, MODTYP, CMAKE=False, OLDLDAS=False, fout=None):
+def check_bld(SRC_DIR, MODTYP, CVS=False, OLDLDAS=False, DEBUG=False, fout=None):
     """
     # --------------------------------------------------------------------------
     # Check if key files exist for the specified build. Return True if the files
@@ -1197,17 +1252,21 @@ def check_bld(SRC_DIR, MODTYP, CMAKE=False, OLDLDAS=False, fout=None):
     """
     if not fout: fout = sys.stdout
 
-    if CMAKE:
-        BIN_DIR = SRC_DIR + '/../BUILD/Applications/GEOSgcm_App'
-    else:
+    if CVS:
         BIN_DIR = SRC_DIR + '/../Linux/bin'
+    else:
+        # Are we running with Debug or Release?
+        # -------------------------------------
+        if DEBUG:
+            BUILD_TYPE="Debug"
+        else:
+            BUILD_TYPE="Release"
+        INSTALL_DIR_NAME='install-'+BUILD_TYPE
+        BIN_DIR = SRC_DIR + os.sep + INSTALL_DIR_NAME + os.sep + 'bin'
 
     if MODTYP=='AGCM':
-        if CMAKE:
-            files2chk = [BIN_DIR + '/GEOSgcm.x']
-        else:
-            files2chk = [BIN_DIR + '/GEOSgcm.x', BIN_DIR + '/binarytile.x',
-                         BIN_DIR + '/g5_modules']
+        files2chk = [BIN_DIR + '/GEOSgcm.x', BIN_DIR + '/binarytile.x',
+                     BIN_DIR + '/g5_modules']
     elif MODTYP=='ADAS':
         files2chk = [BIN_DIR + '/GEOSgcm.x',     BIN_DIR + '/GSIsa.x',
                      BIN_DIR + '/oiqcbufr.x',    BIN_DIR + '/mkiau.x',
@@ -1307,14 +1366,14 @@ def check_doc(SRC_DIR, MODTYP, fout=None):
 
     for file in files2chk:
         if not os.path.isfile(file):
-            writemsg('check_bld: file [%s] does not exist!\n' % file, fout)
+            writemsg('check_doc: file [%s] does not exist!\n' % file, fout)
             return False
 
     return True
 
 
 
-def submit_job(JOB_SCRPT, qdbg=None, fout=None):
+def submit_job(JOB_SCRPT, account=None, qdbg=None, fout=None):
     """
     # --------------------------------------------------------------------------
     # Submit job to PBS queue, wait for job to complete and print CPU and Wall
@@ -1332,7 +1391,12 @@ def submit_job(JOB_SCRPT, qdbg=None, fout=None):
     if not fout: fout = sys.stdout
     if not os.path.isfile(JOB_SCRPT):
         raise Exception('job script [%s] does not exist' % JOB_SCRPT)
-    
+
+    _account =''
+    if account is not None:
+        if HOST == 'DISCOVER':
+            _account= '--account='+account
+
     # current dir and job dir
     # -----------------------
     CWD = os.getcwd()
@@ -1345,14 +1409,14 @@ def submit_job(JOB_SCRPT, qdbg=None, fout=None):
     writemsg(' Submitting job...', fout)
     if HOST == 'DISCOVER':
         if qdbg:
-            cmd = ['sbatch', '--qos=debug', '--time=1:00:00', JOB_SCRPT]
+            cmd = ['sbatch',_account, '--qos=debug', '--time=1:00:00', JOB_SCRPT]
             #cmd = ['sbatch', '--time=1:00:00', JOB_SCRPT]
         else:
-            cmd = ['sbatch', JOB_SCRPT]
+            cmd = ['sbatch',_account, JOB_SCRPT]
     elif HOST=='PLEIADES':
         if qdbg:
-            #cmd = ['qsub', '-q', 'devel', '-l', 'walltime=2:00:00', JOB_SCRPT]
-            cmd = ['qsub', '-l', 'walltime=2:00:00', JOB_SCRPT]
+            cmd = ['qsub', '-q', 'devel', '-l', 'walltime=1:00:00', JOB_SCRPT]
+            #cmd = ['qsub', '-l', 'walltime=2:00:00', JOB_SCRPT]
         else:
             cmd = ['qsub', JOB_SCRPT]
     else: 
@@ -1534,7 +1598,7 @@ def write_file_contents(exp_content, hom_content, grp_content, hst_content):
 
 
 
-def run_setup_script(SETUP_SCRPT, SETUP_INPUT, GPU=False, fout=None, quiet=None):
+def run_setup_script(SETUP_SCRPT, SETUP_INPUT, GPU=False, fout=None, quiet=None, LINK=False):
     """
     # --------------------------------------------------------------------------
     # ./gcm_setup: awk 'BEGIN {FS="="}{print $2}' GCM_INPUT | csh GCM_SETUP
@@ -1553,6 +1617,7 @@ def run_setup_script(SETUP_SCRPT, SETUP_INPUT, GPU=False, fout=None, quiet=None)
     # MAT: Do not do the cvs checkout due to inode pressure
     cmd2 += ['--nocvs']
     if GPU: cmd2 += ['-g']
+    if LINK: cmd2 += ['--link']
     run1 = sp.Popen(cmd1, stdout=sp.PIPE, stderr=sp.PIPE)
     rtrnCode = run1.wait()
     if rtrnCode != 0: raise Exception('run1 (awk) failed')
@@ -1793,7 +1858,7 @@ def useSatsim(RUN_DIR, fout=None):
 
     writemsg('done.\n', fout)
 
-def useReplay(RUN_DIR, fout=None):
+def useReplay(RUN_DIR, noIncrements=False, fout=None):
     """
     # --------------------------------------------------------------------------
     # Edit AGCM.rc to use regular replay
@@ -1816,12 +1881,26 @@ def useReplay(RUN_DIR, fout=None):
     fin = open(AGCM_RC, 'r'); lines = fin.readlines(); fin.close()
     sout = open(AGCM_RC, 'w')
     for line in lines:
-        if ('REPLAY_MODE: Regular' in line):
-            line = line.replace('#', ' ')
+        if ('#M2' in line):
+            line = line.replace('#M2', '   ')
         if ('verification' in line):
-            line = line.replace('#', ' ')
             if HOST=='PLEIADES':
                 line = line.replace('/discover/nobackup/projects/gmao/share/gmao_ops','/nobackup/gmao_SIteam/ModelData')
+        if noIncrements:
+            if (re.match('^# *REPLAY_P:',line)):
+                line = ('    REPLAY_P: NO\n')
+            if (re.match('^# *REPLAY_U:',line)):
+                line = ('    REPLAY_U: NO\n')
+            if (re.match('^# *REPLAY_V:',line)):
+                line = ('    REPLAY_V: NO\n')
+            if (re.match('^# *REPLAY_T:',line)):
+                line = ('    REPLAY_T: NO\n')
+            if (re.match('^# *REPLAY_QV:',line)):
+                line = ('    REPLAY_QV: NO\n')
+            if (re.match('^# *REPLAY_O3:',line)):
+                line = ('    REPLAY_O3: NO\n')
+            if (re.match('^# *REPLAY_TS:',line)):
+                line = ('    REPLAY_TS: NO\n')
         sout.write(line)
     sout.close()
 
@@ -2034,7 +2113,6 @@ def edit_gcm_regress_j(RUN_DIR, USE_REPLAY, resolution, PGI=False, nc4_rst=False
 
     writemsg(' Editing %s gcm_regress.j (editing wall time)...' % resolution, fout)
 
-    if USE_REPLAY: writemsg('\n Editing gcm_regress (test_duration for replay)...', fout)
     # copy gcm_regress.j to gcm_regress.j.orig
     # ----------------------------------------
     GCM_REGRESS_J = RUN_DIR + '/regress/gcm_regress.j'; assert os.path.isfile(GCM_REGRESS_J)
@@ -2046,20 +2124,11 @@ def edit_gcm_regress_j(RUN_DIR, USE_REPLAY, resolution, PGI=False, nc4_rst=False
     gout = open(GCM_REGRESS_J, 'w')
     for line in lines:
         if '#PBS -l walltime' in line:
-            line = line.replace('12','2')
-            line = line.replace('8','2')
+            line = line.replace('12','1')
+            line = line.replace('8','1')
         if '#SBATCH --time' in line:
-            line = line.replace('12','2')
-            line = line.replace('8','2')
-
-        # If using regular replay, you cannot have a 21/3 split
-        # since the regular replay files are only on 6 hour dumps
-        # -------------------------------------------------------
-        if USE_REPLAY:
-            if 'test_duration = 210000' in line:
-                line = line.replace('21','18')
-            if 'test_duration = 030000' in line:
-                line = line.replace('03','06')
+            line = line.replace('12','1')
+            line = line.replace('8','1')
 
         # Current PGI + Open MPI seems to have a limit of 12 cores per node
         if PGI:
@@ -2200,8 +2269,6 @@ def createDirs(HOM_DIR, EXSTNG_BLD, fout=None):
     # create run dir and link to bld dir
     # ----------------------------------
     mkdir_p(RUN_DIR)
-    # if not check_bld(EXSTNG_BLD+os.sep+'src'):
-    #     raise Exception('something wrong with existing build in [%s]' % EXSTNG_BLD)
     writemsg(' Creating link to specified bld...', fout)
     create_link(EXSTNG_BLD, HOM_DIR, 'bld')
     writemsg('done.\n', fout)
@@ -2298,9 +2365,9 @@ def git_clone(GITREPO, DIR=None, GITTAG=None, fout=None):
     HOST = get_hostname()
 
     if HOST == 'DISCOVER':
-        cmd = ['/usr/local/other/SLES11.3/git/2.11.0/libexec/git-core/git', 'clone']
+        cmd = ['/gpfsm/dulocal/sles11/other/SLES11.3/git/2.21.0/libexec/git-core/git', 'clone']
     elif HOST == 'PLEIADES':
-        cmd = ['/nasa/pkgsrc/sles12/2016Q4/bin/git', 'clone']
+        cmd = ['/nobackup/gmao_SIteam/git/git-2.21.0/bin/git', 'clone']
 
     if GITTAG: cmd.extend(['-b', ''.join(GITTAG)])
 
@@ -2326,7 +2393,7 @@ def git_change_g5modules(CHKDIR, G5FILE, fout=None):
     # NOTE: Veeeeeeeery fragile
     # 
     # Input:
-    #            CHKDIR: Checkout directory
+    #         CHKDIR: Checkout directory
     #         G5FILE: g5_modules to use in this checkout
     #           fout: handle of open output file, if None - set to sys.stdout
     #  
@@ -2336,12 +2403,88 @@ def git_change_g5modules(CHKDIR, G5FILE, fout=None):
     if not fout: fout = sys.stdout
     writemsg(' Converting checkout %s to use g5_modules from %s ...' % (CHKDIR, G5FILE), fout)
 
-    ORIG_G5_FILE = os.path.join(CHKDIR,'src','g5_modules')
+    ORIG_G5_FILE = os.path.join(CHKDIR,'@env','g5_modules')
     assert os.path.isfile(ORIG_G5_FILE)
 
     shutil.copy(G5FILE,ORIG_G5_FILE)
     assert filecmp.cmp(G5FILE,ORIG_G5_FILE)
 
+    writemsg('done.\n', fout)
+
+def git_checkout_externals(CHKDIR, EXTERN, fout=None):
+    """
+    # --------------------------------------------------------------------------
+    # Checks out the externals from the git clone
+    # 
+    # Input:
+    #         CHKDIR: Checkout directory
+    #         EXTERN: manage_externals cfg to use
+    #           fout: handle of open output file, if None - set to sys.stdout
+    #  
+    # --------------------------------------------------------------------------
+    """
+
+    if not fout: fout = sys.stdout
+    writemsg(' Running checkout_externals on %s in %s ...' % (EXTERN, CHKDIR), fout)
+
+    os.chdir(CHKDIR)
+    assert os.path.isfile(EXTERN)
+
+    cmd = ['checkout_externals','-e',EXTERN]
+    run = sp.Popen(cmd, stdout=sp.PIPE, stderr=sp.PIPE)
+
+    print(cmd)
+
+    output = run.communicate()
+    rtrnCode = run.wait()
+    if rtrnCode != 0:
+        print('0:'); print(output[0]); print('1:'); print(output[1])
+        raise Exception('checkout_externals failed')
+
+    writemsg('done.\n', fout)
+
+def git_checkout_mepo(CHKDIR, MAPLDEV, fout=None):
+    """
+    # --------------------------------------------------------------------------
+    # Checks out the externals from the git clone
+    # 
+    # Input:
+    #         CHKDIR: Checkout directory
+    #        MAPLDEV: use mapl develop
+    #           fout: handle of open output file, if None - set to sys.stdout
+    #  
+    # --------------------------------------------------------------------------
+    """
+
+    if not fout: fout = sys.stdout
+    writemsg(' Running mepo in %s ...' % (CHKDIR), fout)
+
+    os.chdir(CHKDIR)
+
+    cmd1 = ['mepo', 'init']
+    cmd2 = ['mepo', 'clone']
+    cmd3 = ['mepo', 'develop', 'GEOSgcm_GridComp', 'GEOSgcm_App']
+    if MAPLDEV:
+        cmd3 += ['MAPL']
+
+    run1 = sp.Popen(cmd1, stdout=sp.PIPE, stderr=sp.PIPE)
+    rtrnCode = run1.wait()
+    if rtrnCode != 0: raise Exception('run1 (mepo init) failed')
+
+    run2 = sp.Popen(cmd2, stdin=run1.stdout,stdout=sp.PIPE)
+    rtrnCode = run2.wait()
+    if rtrnCode != 0: raise Exception('run2 (mepo clone) failed')
+
+    run3 = sp.Popen(cmd3, stdin=run2.stdout,stdout=sp.PIPE)
+    rtrnCode = run3.wait()
+    if rtrnCode != 0: raise Exception('run3 (mepo develop) failed')
+
+    run1.stdout.close()
+    run2.stdout.close()
+    output = run3.communicate()
+    if output[1]:
+        print('0:'); print(output[0]); print('1:'); print(output[1]); print('2:'); print(output[2])
+        raise Exception('git_checkout_mepo failed')
     writemsg('done.\n', fout)
 
 def useHemco(RUN_DIR, fout=None):
@@ -2467,7 +2610,7 @@ def is_tool(name):
 
     return find_executable(name) is not None
 
-def nc4_compare(bas_file, cur_file, debug=None, toolToUse='cdo'):
+def nc4_compare(bas_file, cur_file, debug=None, toolToUse='nccmp', AllowNan=None):
     """
     # --------------------------------------------------------------------------
     # Compare two netcdf files
@@ -2484,14 +2627,14 @@ def nc4_compare(bas_file, cur_file, debug=None, toolToUse='cdo'):
     if 'cdo' in toolToUse and is_tool('cdo'):
         rc = cdo_compare(bas_file, cur_file, diff='cdo', debug=debug)
     elif 'nccmp' in toolToUse and is_tool('nccmp'):
-        rc = nccmp_compare(bas_file, cur_file, diff='nccmp', debug=debug)
+        rc = nccmp_compare(bas_file, cur_file, diff='nccmp', debug=debug, AllowNan=AllowNan)
     else:
         print("Neither nccmp or cdo found in path!!!")
         raise Exception('no nc4 comparator found')
 
     return rc
 
-def nccmp_compare(bas_file, cur_file, diff='nccmp', debug=None):
+def nccmp_compare(bas_file, cur_file, diff='nccmp', debug=None, AllowNan=None):
     """
     # --------------------------------------------------------------------------
     # Compare two netcdf files using nccmp
@@ -2506,7 +2649,12 @@ def nccmp_compare(bas_file, cur_file, diff='nccmp', debug=None):
     # --------------------------------------------------------------------------
     """
 
-    cmd = [diff, '-df', bas_file, cur_file]
+    if AllowNan:
+        cmp_options = '-BdN'
+    else:
+        cmp_options = '-Bd'
+
+    cmd = [diff, cmp_options, bas_file, cur_file]
     if debug: 
         print("\nUsing", diff)
         print("Running ", cmd)
