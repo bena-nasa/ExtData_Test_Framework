@@ -1,0 +1,4 @@
+data_sets:
+   fstream1: {file_template: "case1.%y4%m2%d2.nc4", valid_range: [2007, 2007] }
+rules:
+   VAR2D: {file_var: VAR2D, file_template_key: fstream1, source_time: [2007, 2007], cycling: true}

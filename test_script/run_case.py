@@ -27,6 +27,9 @@ class ExtDataCase():
         rc_files = glob.glob(self.case_path+"/*.rc")
         for rc_file in rc_files:
             shutil.copy(rc_file,scrdir)
+        yaml_files = glob.glob(self.case_path+"/*.yaml")
+        for yaml_file in yaml_files:
+            shutil.copy(yaml_file,scrdir)
         os.chdir(scrdir)
 
         g5_mod_path = self.build_dir+"/g5_modules"
@@ -39,7 +42,12 @@ class ExtDataCase():
            fproc.close()
         else:
            nproc = "1"
-        exec_path = self.build_dir+"/esma_mpirun -np "+nproc+" "+self.build_dir+"/ExtDataDriver.x "
+
+        #if not os.path.isfile('extdata.yaml'):
+           #exec_path = "/gpfsm/dswdev/bmauer/packages/erc/erc ExtData.rc extdata.yaml" 
+           #sp.call(exec_path,stdout=logfile,stderr=logfile,shell=True)
+        #exec_path = self.build_dir+"/esma_mpirun -np "+nproc+" "+self.build_dir+"/ExtDataDriver.x "
+        exec_path = "mpirun -np "+nproc+" "+self.build_dir+"/ExtDataDriver.x "
         sp.call(exec_path,stdout=logfile,stderr=logfile,shell=True)
         sp.call("~/bin/Killall ExtDataDriver.x",stdout=logfile,stderr=logfile,shell=True)
 

@@ -1,0 +1,4 @@
+data_sets:
+   fstream1: {file_template: "case1.%y4%m2%d2_%h2%n2.nc4", file_reference_time: "2004-02-01T21:30:00", file_frequency: "PT3H"}
+rules:
+   VAR2D: {file_var: VAR2D, file_template_key: fstream1}
