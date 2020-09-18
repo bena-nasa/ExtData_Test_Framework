@@ -1,0 +1,6 @@
+data_sets:
+   fstream1: {file_template: "vars2d.nc4"}
+   fstream2: {file_template: "vars3d.nc4"}
+rules:
+   VAR2D: {file_var: VAR2D, file_template_key: fstream1, update_frequency: "-"}
+   VAR3D: {file_var: VAR3D, file_template_key: fstream2, update_frequency: "-"}

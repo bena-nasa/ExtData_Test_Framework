@@ -16,7 +16,7 @@ VAR2D , time , days , xy , c
 ::
 
 FILL_DEF::
-VAR2D time
+VAR2D 17.0
 ::
 
 REF_TIME: 20040701 000000

@@ -1,4 +1,4 @@
 data_sets:
    fstream1: {file_template: "case1.nc4"}
 rules:
-   VAR2D: {file_var: VAR2D, file_template_key: fstream1}
+   VAR2D: {file_var: VAR2D, file_template_key: fstream1, update_frequency: "-"}
